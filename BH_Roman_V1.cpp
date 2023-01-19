@@ -5,8 +5,10 @@
 #include <iostream>
 #include <sys/time.h>
 #include <sys/timeb.h>
-//#include "VBBinaryLensingLibrary.h"
 using namespace std;
+
+#define Nx 7
+#define Ny 3
 
 const int Num=2000;
 const double MaxD=20.0;///kpc
@@ -21,12 +23,13 @@ const double M_sun=1.98892*pow(10.,30); //in [kg].
 const double Rsun= 6.957*pow(10.0,8.0); ///solar radius [meter]
 const double vro_sun=226.0;
 const double AU=1.4960*pow(10.0,11.0);
-const double year=365.2421875;
+const double year=364.0;
 const double binary_fraction=double(2.0/3.0);
 const double Avks=double(8.20922);
 const double VSunR =11.1;
 const double VSunT =vro_sun*(1.00762+0.00712)+ 12.24;
 const double VSunZ =7.25;
+
 
 ///============================ Besancon constant ==============///
 const double R_sun=8.5;
@@ -36,7 +39,7 @@ const double epci[8]={0.014,0.0268,0.0375,0.0551,0.0696,0.0785,0.0791,0.0791};
 const double corr[8]={1.0,7.9/4.48419, 6.2/3.52112, 4.0/2.27237, 5.8/3.29525, 4.9/2.78402, 6.6/3.74991, 3.96/2.24994};
 const double Rv[4]={3.1,2.5,3.1,3.1};
 
-///============================ WFIRST & OGLE & KMTNet ===================
+///============================ WFIRST & OGLE &  KMTNet ===================
 const int M=5;///number of filters  VIKH,W149
 const double satu[M]={12.0, 12.0, 13.0, 13.0, 14.8}; //it should be changed
 const double thre[M]={20.0, 21.0, 21.0, 21.0, 26.0};
@@ -44,12 +47,12 @@ const double FWHM[M]={0.33, 0.33, 0.33, 0.33 , 0.33};//3*pixel_size (0.11") of W
 const double AlAv[M]={1.009,0.600,0.118,0.184,0.225};///From besancon model[VIKH W149]
 const double sigma[M]={0.022,0.022,0.02,0.025,0.025};//MOAاستفاده از مقاله کاردلی
 const double Akv=0.118;
-const double cade1=15.16/(60.0*24.0);///W149_cadence in  day
-const double dt=double(10.0/60.0/24.0);//[days]
-const int coun=int(5.0*year/dt) + 2;
+const double cade1=double(15.16/60.0/24.0);//W149_cadence in  day
+const double dt=cade1;//double(7.58/60.0/24.0);//days
+const int coun= 37000;
 ////=======================================================
 ///**************  Number constant  ********************///
-const int Na=int(16);
+const int Na=int(38);
 const int Nw=int(123);///sigma_WFIRST.dat
 const int YZ=3615;///number of rows in file yzma
 const int N1=36224, N2=25000, N3=3818, N4=3500;///CMD_BESANCON, thinD, bulge, thickD, halo
@@ -64,10 +67,13 @@ struct source{
     double Nstart,Rostart,Romaxs,nstart;
     double Nblend[M], blend[M], Fluxb[M], magb[M], Ai[M], Mab[M], Map[M];
     double type, Tstar, logl, col, Rstar, mass,vs;
-    double Romax,ro_star, deltao;
+    double Romax,ros, deltao;
     double SV_n1, LV_n1, VSun_n1;
     double SV_n2, LV_n2, VSun_n2;
-    double tetv; 
+    double mus1, mus2, mul1, mul2;
+    double pos1, pos2, Astar, xi;
+    double fb, mbs;
+    double ut; 
 };
 struct lens{
     int numl,struc;
@@ -84,8 +90,7 @@ struct astromet{
    double vearth;
    double fact;
    double Ve_n1, Ve_n2;
-   double sx0, sy0, lx0, ly0;
-   double sx1, sy1, lx1, ly1;
+   double ue_n1, ue_n2;
 };
 struct CMD{
     double Teff_d[N1],logl_d[N1],Mab_d[5][N1],Rs_d[N1],mass_d[N1],type_d[N1]; int cl_d[N1];  ///thin disk
@@ -97,6 +102,10 @@ struct extinc{
    double dis[100];///distance
    double Extks[100];///ks-band extinction
    double Aks;
+};
+struct covarian{
+   double FishM[Nx][Nx];
+   double FishA[Ny][Ny];
 };
 struct roman{
      double magw[Nw], errw[Nw];
@@ -113,7 +122,8 @@ void optical_depth(source & s);
 double Interpol(double ds, extinc & ex);
 double RandN(double sigma, double Nn);
 double RandR(double down, double up);
-void astrometric(source & s, astromet & as, double tim);
+int ErrorRoman(lens & l, double mag);
+void lightcurve(source & s, lens & l, astromet & as, double tim); 
 double errwfirst(roman & ro, double ghadr, int flag);
 //////////////////////////////////////////////////////
     time_t _timeNow;
@@ -128,6 +138,7 @@ double errwfirst(roman & ro, double ghadr, int flag);
 ///==============================================================//
 int main()
 {
+
 ///****************************************************************************
 //gettimeofday(&newTime,NULL);
 //ftime(&tp);
@@ -138,52 +149,66 @@ int main()
     _dummyVal = fread(&_randVal, sizeof(_randVal), 1, _randStream);
 	srand(_randVal);
 ///****************************************************************************
-
+     //VBBinaryLensing vbb;
+     //vbb.Tol=1.e-3;
+     //vbb.LoadESPLTable("./files/ESPL.tbl");
      source s;
      lens l;
      astromet as;
      CMD cm;
      extinc ex;
+     covarian co; 
      roman ro; 
      read_cmd(cm);
-
-     //VBBinaryLensing vbb;
-     //vbb.Tol=1.e-3;
-     //vbb.LoadESPLTable("./files/ESPL.tbl");
-     FILE* magg;  
-     FILE* data3;    
-
 ///===========================================================
 
     FILE * wfirstf;
     wfirstf=fopen("./files/sigma_WFIRST.txt","r");
     for(int i=0; i<Nw;++i){
-    fscanf(wfirstf,"%lf     %lf\n",&ro.magw[i],&ro.errw[i]);}
+    fscanf(wfirstf,"%lf  %lf\n",&ro.magw[i],&ro.errw[i]);}
     fclose(wfirstf);
     
     FILE * roman;
-    roman=fopen("./files/roman_astro.txt","r");
+    roman=fopen("./files/roman_astro2.txt","r");
     for(int i=0; i<Na;++i){
     fscanf(roman,"%lf     %lf\n",&ro.maga[i],&ro.erra[i]);
     ro.erra[i]= pow(10.0,ro.erra[i])*1000.0;///miliarcs
     }
     fclose(roman);
+    
     //cout<<"*****  sigma_wfirst was read *****  "<<endl;
 ///===========================================================
 
 
     FILE* fil1;
-    fil1=fopen("./files/MONT/IBH_ROMAN.txt","w");
+    fil1=fopen("./files/MONT1/IBH_ROMAN1a.txt","w");
     fclose(fil1);
 
+    FILE* fil2;
+    fil2=fopen("./files/MONT1/IBH_ROMAN2a.txt","w");
+    fclose(fil2);
+    
+    FILE* fil3;
+    fil3=fopen("./files/MONT1/IBH_ROMAN3a.txt","w");
+    fclose(fil3);
 
-    double obs[6][2]={0.0};
-    obs[0][0]=0.0*year+1.0;    obs[0][1]=0.0*year +72.0;
-    obs[1][0]=0.0*year+182.0;  obs[1][1]=0.0*year+254.0;
-    obs[2][0]=1.0*year+1.0;    obs[2][1]=1.0*year+72.0;
-    obs[3][0]=3.0*year+182.0;  obs[3][1]=3.0*year+254.0;
-    obs[4][0]=4.0*year+1.0;    obs[4][1]=4.0*year+72.0;
-    obs[5][0]=4.0*year+182.0;  obs[5][1]=4.0*year+254.0;
+
+    double obs1[6][2]={0.0};
+    double obs2[4][2]={0.0};
+    obs1[0][0]=0.0*year+0.0;    obs1[0][1]=0.0*year+62.0;
+    obs1[1][0]=0.0*year+182.0;  obs1[1][1]=0.0*year+182.0+62.0;
+    obs1[2][0]=1.0*year+0.0;    obs1[2][1]=1.0*year+62.0;
+
+    obs2[0][0]=1.0*year+182.0;  obs2[0][1]=1.0*year+182.0+62.0;
+    obs2[1][0]=2.0*year+0.0;    obs2[1][1]=2.0*year+62.0;
+    obs2[2][0]=2.0*year+182.0;  obs2[2][1]=2.0*year+182.0+62.0;
+    obs2[3][0]=3.0*year+0.0;    obs2[3][1]=3.0*year+62.0;
+
+    obs1[3][0]=3.0*year+182.0;  obs1[3][1]=3.0*year+182.0+62.0;
+    obs1[4][0]=4.0*year+0.0;    obs1[4][1]=4.0*year+62.0;
+    obs1[5][0]=4.0*year+182.0;  obs1[5][1]=4.0*year+182.0+62.0;
+    
+    
     
     
     double cade2[2000];
@@ -191,37 +216,45 @@ int main()
     cade2[i]=  cade1; 
     cade2[i+1]=cade1; 
     cade2[i+2]=cade1; 
-    cade2[i+3]= 10.0; }
+    cade2[i+3]= 10.0;}
 
 
     as.tetp=double(M_PI/3.0);
     as.omegae=double(2.0*M_PI/year); ///radian per day
-    as.vearth= as.omegae;//*0.001/(24.0*3600.0); ///km/s
+    as.vearth= as.omegae;
     as.fact=double(1000.0*3600.0*24.0/AU);
   
     
-
-    int  flagf, ii;
-    int  ndw, flago, w1;
+    int    flag_det=0;
+    int    flagf,counter=0;
+    int    ndw, w1;
     char   filnam1[40], filnam2[40];
-    double magnio, erro, test;
+    double magnio, test;
     double magni[M];
     double timp1,lonn, chi, chi1, tim;
-    double flag0, flag1, flag2;
-    double t_0, t_1;
+    float  flag0, flag1, flag2;
     double dchi, mh;
-    double Nmlw=0.0;
-    int    flag_peak=0, flag_det=0, flag_mlw=0;
-    double lonn0, lat0, siga, snr, errx, erry;
-    double u0, u1, Vt, Astar0, Astar1, Dx0, Dy0, Dx1, Dy1; 
-    int    counter=0;
-    double sxi, syi, mag_w0, mag_w1; 
-    double mus1, mus2, mul1, mul2;
-    double errm, erra; 
+    double lonn0, lat0, siga, snr, errx, erry;  
+    double magw, derm1[2], derm2[2], dera1[2], derb1[2], dera2[2], derb2[2]; 
+    double derm1f, derm2f, dera1f, derb1f, dera2f, derb2f; 
+    double Delta1[Nx], Delta2[Ny];
+    float  sig[2]={+1.0, -1.0};  
+    double errg,flago, errs; 
+    int    datf;
+    double nsim=0.0; 
+   
+   double *timn=new double[coun];
+   double *magn=new double[coun];
+   double *soux=new double[coun];
+   double *souy=new double[coun];
+   double *errm=new double[coun];
+   double *erra=new double[coun];
+   
 
-
-     for(int icon=1; icon<200; ++icon){
-     cout<<"***** Step:  "<<icon<<endl;
+   
+ 
+     for(int icon=1; icon<200000; ++icon){
+   //  cout<<"***** Step:  "<<icon<<endl;
      for (int li=1; li<=7; li++){
      if(li==1) {lonn0=1.3;  lat0=-0.875; }
      if(li==2) {lonn0=0.9;  lat0=-0.875; }
@@ -230,213 +263,326 @@ int main()
      if(li==5) {lonn0=0.5;  lat0=-1.675; }
      if(li==6) {lonn0=0.1;  lat0=-1.675; }
      if(li==7) {lonn0=-0.3; lat0=-1.675; }
-
      s.lat= lat0+ double(RandR(-0.375,0.375));
      lonn =lonn0+ double(RandR(-0.200,0.200));
-     //cout<<"lat:  "<<s.lat<<"\t lonn:  "<<lonn<<endl;
-     //cout<<"latitude: "<<s.lat<<"\t longtitude: "<<lonn<<endl;
-
+  
      if(lonn<=0.0)   s.lon=360.0+lonn;
      else            s.lon=lonn;
      
-     s.TET=double(360.0-s.lon)/RA;///radian
+     s.TET=(360.0-s.lon)/RA;///radian
      s.FI=s.lat/RA;///radian
      Disk_model(s);
-     
      if(int(Extinction(ex,s))==1){
+
      do{
      func_source(s, cm, ex);
      func_lens(l, s);
-     }while(l.tE<=0.1 or l.tE>3000.0);
+     }while(l.tE<=0.1 or l.tE>30000.0);
      optical_depth(s);
     
     
-     mus1= double(s.SV_n1- s.VSun_n1)*1000.0*3600.0*24.0/(s.Ds*AU);///mas/days
-     mus2= double(s.SV_n2- s.VSun_n2)*1000.0*3600.0*24.0/(s.Ds*AU);///mas/days
-     mul1= double(s.LV_n1- s.VSun_n1)*1000.0*3600.0*24.0/(l.Dl*AU);///mas/days
-     mul2= double(s.LV_n2- s.VSun_n2)*1000.0*3600.0*24.0/(l.Dl*AU);///mas/days 
+     s.mus1= double(s.SV_n1- s.VSun_n1)*1000.0*3600.0*24.0/(s.Ds*AU);///mas/days
+     s.mus2= double(s.SV_n2- s.VSun_n2)*1000.0*3600.0*24.0/(s.Ds*AU);///mas/days
+     s.mul1= double(s.LV_n1- s.VSun_n1)*1000.0*3600.0*24.0/(l.Dl*AU);///mas/days
+     s.mul2= double(s.LV_n2- s.VSun_n2)*1000.0*3600.0*24.0/(l.Dl*AU);///mas/days 
      l.piE=double(1.0/l.Dl -1.0/s.Ds)/l.tetE; 
+     
+    // cout<<"mus1:  "<<s.mus1<<"\t mus2:  "<<s.mus2<<endl; 
+    // cout<<"mul1:  "<<s.mul1<<"\t mul2:  "<<s.mul2<<"\t l.piE:  "<<l.piE<<endl; 
+    // cout<<"blending:  "<<s.fb<<"\t m_base:  "<<s.mbs<<endl;   
     
      test=(double)rand()/((double)(RAND_MAX)+(double)(1.0));
-     if(test<=s.blend[4] and s.magb[4]<=thre[4]){
+     if(test<=s.fb and s.mbs<=thre[4]){
      counter+=1; 
-
-     flagf=0;
-     if(counter%1==0){
-     flagf=1;
-     sprintf(filnam1,"./files/MONT/%c%c%c%c%d.dat",'m','a','g','_', counter);
-     sprintf(filnam2,"./files/MONT/%c%c%c%c%d.dat",'d','a','t','_', counter);
-     magg=fopen(filnam1,"w");    data3=fopen(filnam2,"w");}
      
+     //flagf=1;
+     //sprintf(filnam2,"./files/MONT/%c%c%c%c%d.dat",'d','a','t','_', counter);
+     //data3=fopen(filnam2,"w");
      
-     double *magn=new double[coun];
-     double *timn=new double[coun];
-     double *soux=new double[coun];
-     double *souy=new double[coun];
-///*********************************************************************************
-  
-     int numn=0;   
-     for(int i=0; i<coun; ++i){magn[i]=timn[i]=-1.0; soux[i]=souy[i]=0.0;}
-     sxi= -l.u0*l.tetE*sin(s.tetv);
-     syi= +l.u0*l.tetE*cos(s.tetv);
-     as.lx1=as.ly1=as.lx0=as.ly0=0.0;//Lens is at the origin 
-     as.sx1=as.sx0=sxi;//n1
-     as.sy1=as.sy0=syi;//n2
-
-
-     for(tim=l.t0;  tim>0.0;  tim-=dt){
-     numn+=1;
-     astrometric(s,as, tim);
-     as.sx1 -=  double(s.SV_n1- s.VSun_n1)*as.fact*dt/s.Ds - as.Ve_n1*dt/s.Ds;///mili arcs
-     as.sy1 -=  double(s.SV_n2- s.VSun_n2)*as.fact*dt/s.Ds - as.Ve_n2*dt/s.Ds;///mili arcs
-     as.lx1 -=  double(s.LV_n1- s.VSun_n1)*as.fact*dt/l.Dl - as.Ve_n1*dt/l.Dl;///mili arcs
-     as.ly1 -=  double(s.LV_n2- s.VSun_n2)*as.fact*dt/l.Dl - as.Ve_n2*dt/l.Dl;///mili arcs
-     
-     as.sx0 -=  double(s.SV_n1- s.VSun_n1)*as.fact*dt/s.Ds;///mili arcs
-     as.sy0 -=  double(s.SV_n2- s.VSun_n2)*as.fact*dt/s.Ds;///mili arcs
-     as.lx0 -=  double(s.LV_n1- s.VSun_n1)*as.fact*dt/l.Dl;///mili arcs
-     as.ly0 -=  double(s.LV_n2- s.VSun_n2)*as.fact*dt/l.Dl;///mili arcs
-     
-     u0= sqrt((as.sx0-as.lx0)*(as.sx0-as.lx0)+(as.sy0-as.ly0)*(as.sy0-as.ly0))/l.tetE;//without dimention 
-     u1= sqrt((as.sx1-as.lx1)*(as.sx1-as.lx1)+(as.sy1-as.ly1)*(as.sy1-as.ly1))/l.tetE;//without dimention
-     
-     Astar0= (u0*u0+2.0)/sqrt(u0*u0*(u0*u0+4.0));
-     Astar1= (u1*u1+2.0)/sqrt(u1*u1*(u1*u1+4.0));
-     
-     mag_w0= s.magb[4]- 2.5*log10(Astar0*s.blend[4] + 1.0 - s.blend[4]);//W149
-     mag_w1= s.magb[4]- 2.5*log10(Astar1*s.blend[4] + 1.0 - s.blend[4]);//W149
-     
-     Dx0=double(as.sx0-as.lx0)/(u0*u0+2.0); 
-     Dy0=double(as.sy0-as.ly0)/(u0*u0+2.0);
-     Dx1=double(as.sx1-as.lx1)/(u1*u1+2.0); 
-     Dy1=double(as.sy1-as.ly1)/(u1*u1+2.0);
-     
-     
-     ii=int(tim/dt)+1;
-     if(ii>=0 and ii<coun){
-     magn[ii]= Astar1;  timn[ii]=tim;  soux[ii]= as.sx1+Dx0;  souy[ii]=as.sy1+Dy0;}
-     if(flagf>0 and numn%5==0)  
-     
-     fprintf(magg,"%.4lf %.4lf %.4lf %.4lf %.4lf %.4lf  %.4lf %.4lf  %.4lf  %.4lf  %.4lf  %.4lf  %.4lf  %.4lf %.4lf %.4lf %.4lf  %d\n",
-     tim,mag_w1,mag_w0,Astar1,Astar0,as.sx1,as.sy1,as.lx1,as.ly1,as.sx0,as.sy0,as.lx0,as.ly0, Dx0, Dy0,sxi,syi,0);}//18
-     
-  
-
-///*********************************************************************************
-
-     as.lx1=as.ly1=as.lx0=as.ly0=0.0;///Lens is at the origin 
-     as.sx1=as.sx0= sxi;///n1
-     as.sy1=as.sy0= syi;///n2
-     for(tim=l.t0; tim<(5.0*year); tim+=dt){
-     numn+=1;
-    
-     astrometric(s,as, tim);
-      
-     as.sx1 +=  double(s.SV_n1- s.VSun_n1)*as.fact*dt/s.Ds - as.Ve_n1*dt/s.Ds;///mili arcs
-     as.sy1 +=  double(s.SV_n2- s.VSun_n2)*as.fact*dt/s.Ds - as.Ve_n2*dt/s.Ds;///mili arcs
-     as.lx1 +=  double(s.LV_n1- s.VSun_n1)*as.fact*dt/l.Dl - as.Ve_n1*dt/l.Dl;///mili arcs
-     as.ly1 +=  double(s.LV_n2- s.VSun_n2)*as.fact*dt/l.Dl - as.Ve_n2*dt/l.Dl;///mili arcs
-     
-     as.sx0 +=  double(s.SV_n1- s.VSun_n1)*as.fact*dt/s.Ds;///mili arcs
-     as.sy0 +=  double(s.SV_n2- s.VSun_n2)*as.fact*dt/s.Ds;///mili arcs
-     as.lx0 +=  double(s.LV_n1- s.VSun_n1)*as.fact*dt/l.Dl;///mili arcs
-     as.ly0 +=  double(s.LV_n2- s.VSun_n2)*as.fact*dt/l.Dl;///mili arcs
-        
-     u0= sqrt((as.sx0-as.lx0)*(as.sx0-as.lx0)+(as.sy0-as.ly0)*(as.sy0-as.ly0))/l.tetE;//without dimention 
-     u1= sqrt((as.sx1-as.lx1)*(as.sx1-as.lx1)+(as.sy1-as.ly1)*(as.sy1-as.ly1))/l.tetE;//without dimention
-     
-
-     Astar0= (u0*u0+2.0)/sqrt(u0*u0*(u0*u0+4.0));
-     Astar1= (u1*u1+2.0)/sqrt(u1*u1*(u1*u1+4.0));
-     mag_w0= s.magb[4]- 2.5*log10(Astar0*s.blend[4] + 1.0 - s.blend[4]);//W149
-     mag_w1= s.magb[4]- 2.5*log10(Astar1*s.blend[4] + 1.0 - s.blend[4]);//W149
-     
-     
-     Dx0= double(as.sx0-as.lx0)/(u0*u0+2.0); 
-     Dy0= double(as.sy0-as.ly0)/(u0*u0+2.0);
-     Dx1= double(as.sx1-as.lx1)/(u1*u1+2.0); 
-     Dy1= double(as.sy1-as.ly1)/(u1*u1+2.0);
-     
-    
-     ii=int(tim/dt)+1;
-     if(ii>=0 and ii<coun){
-     magn[ii]= Astar1;  timn[ii]=tim;  soux[ii]= as.sx1+Dx0;  souy[ii]=as.sy1+Dy0;}
-     if(flagf>0 and numn%5==0)  
-     fprintf(magg,"%.4lf %.4lf %.4lf %.4lf %.4lf %.4lf  %.4lf %.4lf  %.4lf  %.4lf  %.4lf  %.4lf  %.4lf  %.4lf %.4lf %.4lf %.4lf  %d\n",
-     tim,mag_w1,mag_w0,Astar1,Astar0,as.sx1,as.sy1,as.lx1,as.ly1,as.sx0,as.sy0,as.lx0,as.ly0, Dx0, Dy0,sxi,syi,1);}//18
-    //0     1      2     3       4      5     6      7       8     9     10       11     12    13   14   15  16  17
-  
-     
-///************************** WFIRST  *********************************************
+   
+///*********************************************************************************   
+     for(int i=0; i<coun; ++i){
+     timn[i]=0.0; magn[i]=0.0; soux[i]=0.0;  souy[i]=0.0;  errm[i]=0.0;  erra[i]=0.0; }
      flag0=flag1=flag2=0.0;
-     ndw=flag_peak=flag_det=0;
-     t_1=t_0=0.0;
-     chi=chi1=0.0;
-     timp1=0.0;
-     int vx=0, datf; 
+     ndw=flag_det=0;
+     chi=0.0;   chi1=0.0;
+     timp1=0.0; tim=0.0;
+     int vx=0;
      
      
+     for(tim=0.0;  tim<double(5.0*year); tim+=dt){
      
-     for(int j=0; j<coun; ++j){
-     if(magn[j]>0.0){
-     tim=timn[j];  
-     timp1 +=dt;
      
-     for(int i=0;i<M; ++i){
-     magni[i] =s.magb[i]-2.5*log10(magn[j]*s.blend[i] + 1.0 - s.blend[i]);}
-     flago=-1;
-     for(int i=0; i<6; ++i){
-     if((obs[i][0]- tim)*(obs[i][1]- tim)<=0.0){flago=1; break;}}
+     flago=0.0;
+     for(int kl=0; kl<6; ++kl){
+     if((obs1[kl][0]-tim)*(obs1[kl][1]-tim)<=0.0){flago=-1.0; break;}}
+     for(int kl=0; kl<4; ++kl){
+     if((obs2[kl][0]-tim)*(obs2[kl][1]-tim)<=0.0){flago=+1.0; break;}}
+     
      
      datf=0; 
-     if(flago>0 and timp1>cade1)     {datf=1;  timp1-=cade1;           }
-     if(flago<0 and timp1>cade2[vx]) {datf=1;  timp1-=cade2[vx]; vx+=1;}
+     if(flago>0.5 or flago<-0.5){ 
+     timp1 += dt; 
+     if(flago<-0.5){
+     if(timp1>cade1 or timp1==cade1){datf=1;  timp1-=cade1;} }
+     else if(flago>0.5){
+     if(timp1>cade2[vx] or timp1==cade2[vx]){datf=1; timp1-=cade2[vx];  vx+=1;    if(vx>1998)  vx=0;}}}
+       
+     if(datf>0){
+       
+       
+       
+        
+     lightcurve(s,l,as,tim); 
+     s.Astar=double(s.ut*s.ut+2.0)/sqrt(s.ut*s.ut*(s.ut*s.ut+4.0));
+     for(int i=0;i<M; ++i){
+     magni[i] =s.magb[i]-2.5*log10(s.Astar*s.blend[i] + 1.0 - s.blend[i]);}
+     if(magni[4]>=satu[4] and magni[4]<=thre[4]){
+     errg= errwfirst(ro, magni[4], 0); 
+     errs= errwfirst(ro, magni[4], 1); 
+     magnio=magni[4] + RandN(errg ,3.0);
+     chi  +=fabs( (magnio-     s.mbs)*(magnio-     s.mbs)/(errg*errg));
+     chi1 +=fabs( (magnio-  magni[4])*(magnio-  magni[4])/(errg*errg));
      
-     if(magni[4]>=satu[4] and magni[4]<=thre[4] and datf>0){ 
-     errm= errwfirst(ro, magni[4], 0); 
-     erra= errwfirst(ro, magni[4], 1); 
-     magnio=magni[4] + RandN(errm ,3.0);
-     chi  +=fabs( (magnio- s.magb[4])*(magnio- s.magb[4])/(errm*errm));
-     chi1 +=fabs( (magnio-  magni[4])*(magnio-  magni[4])/(errm*errm));
-     errx= RandN(erra ,3.0);
-     erry= RandN(erra ,3.0);
-     fprintf(data3,"%.8lf  %.8lf  %.8lf    %.8lf    %.8lf    %.8lf %d\n",tim, magnio, errm, soux[j]+errx, souy[j]+erry, erra, j);
+    
+     timn[ndw]=tim;
+     magn[ndw]=magni[4];
+     errm[ndw]=errg;
+     soux[ndw]=s.pos1;
+     souy[ndw]=s.pos2;
+     erra[ndw]=errs;
+    
+     
      flag2=0.0;
-     if(fabs(magnio-s.magb[4])>fabs(4.0*errm) )    flag2=1.0;
-     if(ndw>1 and float(flag0+flag1+flag2)>2.0)    flag_det=1; 
+     if(fabs(magnio-s.mbs)>fabs(4.0*errg))         flag2=1.0;
+     if(ndw>1 and float(flag0+flag1+flag2)>2.0)   flag_det=1;
      flag0=flag1;
      flag1=flag2;
-     ndw+=1;}
-     if(vx>1999) vx=0;
-     }}
-
-    if(flagf>0){fclose(magg); fclose(data3);}
-    cout<<"End of loop time ******************"<<endl;
+     ndw+=1;
+     if(ndw>=coun){cout<<"Error ndw:  "<<ndw<<"\t coun:  "<<coun<<endl;  int uue; cin>>uue; }
+     }
+     }
+     }
+    // fclose(data3);
     ///************ WFIRST *********************************************************************
     dchi=fabs(chi-chi1);
+  //  cout<<"dchi:  "<<dchi<<"\t flag_det:  "<<flag_det<<"\t ndw:  "<<ndw<<endl;
+
     if(dchi>800.0 and flag_det>0 and ndw>5){
-   
-    
-    Nmlw+=1.0;
-    fil1=fopen("./files/MONT/IBH_ROMAN.txt","a+");
+    fil1=fopen("./files/MONT1/IBH_ROMAN1a.txt","a+");
     fprintf(fil1,
    "%d  %.5lf   %.5lf  "///3
    "%d  %.5lf   %.5lf   %.5lf  "///7
    "%d   %d  %.5lf   %.5lf  %.4lf  %.4lf  %.4lf  %.2lf  %.3lf  %.4lf  %.4lf   %.4lf   %.4lf  %.4lf  "   //21
    "%.5lf  %.9lf  %.5lf  %.9lf   %.2lf  %.2lf   %.4lf  %.4lf   "  //29
    "%.8lf  %.6lf  %.6lf  %.8lf    %.7lf  %.8lf  %.4lf  %.8lf  %.9lf " ///38
-   "%d  %d  %.1lf  %d   %d   %.9lf  %.9lf   %.9lf  %.9lf  %.9lf    %.9lf\n", //49
+   "%d  %d %.1lf  %d   %d   %.9lf  %.9lf   %.9lf  %.9lf  %.9lf   %.6lf\n", //49
    counter,s.lat, s.lon, //3
    l.struc, l.Ml, l.Dl, l.vl, //7
    s.struc, s.cl, s.mass, s.Ds, s.Tstar, s.Rstar, s.logl, s.type, s.col, s.vs, s.Mab[1], s.Mab[4], s.Map[1], s.Map[4],//21
-   s.magb[1], s.magb[4], s.blend[1], s.blend[4], s.Nblend[1], s.Nblend[4], s.Ai[1], s.Ai[4], //29
-   l.tE, l.RE/AU, l.t0, l.mul, l.Vt, l.u0, s.opd*1.0e6, s.ro_star, l.tetE,//38
-   flagf, flag_det, dchi, ndw,li, mus1, mus2, s.tetv,mul1, mul2, l.piE);//50
+   s.magb[1], s.mbs, s.blend[1], s.fb, s.Nblend[1], s.Nblend[4], s.Ai[1], s.Ai[4], //29
+   l.tE, l.RE/AU, l.t0, l.mul, l.Vt, l.u0, s.opd*1.0e6, s.ros, l.tetE,//38
+   flagf, flag_det, dchi, ndw,li, s.mus1, s.mus2, s.xi, s.mul1, s.mul2, l.piE);//49
    fclose(fil1);
-   cout<<"************* End of saving in the file ***********************"<<endl;}
+  // cout<<"************* End of saving in the file ***********************"<<endl;
+
+///####################################################################################
+   Delta1[5]=0.05;///for mbs   
+   Delta1[3]=0.1; //for xi in radian 
+   if(l.t0>10.0) Delta1[0]=+10.0; 
+   else          Delta1[0]=float(l.t0-2.0); 
+   
+   if(l.u0>0.1)  Delta1[1]=0.1; 
+   else          Delta1[1]=float(l.u0*0.4); 
+            
+   if(l.tE>5.0)  Delta1[2]=5.0;          
+   else          Delta1[2]=float(l.tE*0.4); 
+   
+   
+   if(s.fb>0.1 and s.fb<0.9) Delta1[4]=0.1;
+   else if (s.fb<=0.1)       Delta1[4]=float(s.fb*0.5);
+   else if (s.fb>=0.9)       Delta1[4]=float(1.0-s.fb)*0.5;
+   
+   if(l.piE>0.01) Delta1[6]=0.01;
+   else           Delta1[6]=float(l.piE*0.3);  
+  
+    
+   if(l.tetE>0.2) Delta2[0]=0.2;
+   else           Delta2[0]=l.tetE*0.4;   
+   Delta2[1]= s.mus1*0.25;  
+   Delta2[2]= s.mus2*0.25; 
+   
+   
+   for(int j=0; j<Nx; ++j){
+   for(int k=0; k<Nx; ++k){co.FishM[j][k]=0.0;}}
+   for(int j=0; j<Ny; ++j){
+   for(int k=0; k<Ny; ++k){co.FishA[j][k]=0.0;}}
+  
+  
+  
+   for(int i=0; i<ndw; ++i){
+   
+   for(int j=0; j<Nx; ++j){
+   
+   for(int h=0; h<2; ++h){
+   if(j==0)  l.t0 += double(Delta1[0]*sig[h]);
+   if(j==1)  l.u0 += double(Delta1[1]*sig[h]);
+   if(j==2)  l.tE += double(Delta1[2]*sig[h]);
+   if(j==3)  s.xi += double(Delta1[3]*sig[h]);
+   if(j==4)  s.fb += double(Delta1[4]*sig[h]);
+   if(j==5)  s.mbs+= double(Delta1[5]*sig[h]);
+   if(j==6)  l.piE+= double(Delta1[6]*sig[h]);
+   if(j==7)  s.ros+= double(Delta1[7]*sig[h]);
+   
+   lightcurve(s,l,as,timn[i]);
+   
+   //if(s.ut<float(20.0*s.ros)) s.Astar= vbb.ESPLMag2(s.ut , s.ros);
+   //else                       
+   s.Astar= (s.ut*s.ut+2.0)/sqrt(s.ut*s.ut*(s.ut*s.ut+4.0));
+   
+   magw= s.mbs - 2.5*log10(s.Astar*s.fb + 1.0 - s.fb); 
+   derm1[h]= float(magw-magn[i])/(Delta1[j]*sig[h]);
+   if(j==0) l.t0 -= double(Delta1[0]*sig[h]);  
+   if(j==1) l.u0 -= double(Delta1[1]*sig[h]);  
+   if(j==2) l.tE -= double(Delta1[2]*sig[h]);  
+   if(j==3) s.xi -= double(Delta1[3]*sig[h]);  
+   if(j==4) s.fb -= double(Delta1[4]*sig[h]);   
+   if(j==5) s.mbs-= double(Delta1[5]*sig[h]); 
+   if(j==6) l.piE-= double(Delta1[6]*sig[h]);
+   if(j==7) s.ros-= double(Delta1[7]*sig[h]);}
+   derm1f= double(derm1[0]+derm1[1])*0.5; 
+   
+   
+   for(int k=0; k<=j; ++k){
+   
+   for(int h=0; h<2; ++h){
+   if(k==0) l.t0+= double(Delta1[0]*sig[h]);
+   if(k==1) l.u0+= double(Delta1[1]*sig[h]);
+   if(k==2) l.tE+= double(Delta1[2]*sig[h]);
+   if(k==3) s.xi+= double(Delta1[3]*sig[h]);
+   if(k==4) s.fb+= double(Delta1[4]*sig[h]);
+   if(k==5) s.mbs+=double(Delta1[5]*sig[h]);
+   if(k==6) l.piE+=double(Delta1[6]*sig[h]);
+   if(k==7) s.ros+=double(Delta1[7]*sig[h]);
+   lightcurve(s,l,as,timn[i]);
+   
+   //if(s.ut<float(20.0*s.ros)) s.Astar= vbb.ESPLMag2(s.ut , s.ros);
+   //else                       
+   s.Astar= (s.ut*s.ut+2.0)/sqrt(s.ut*s.ut*(s.ut*s.ut+4.0));
+   
+   magw= s.mbs - 2.5*log10(s.Astar*s.fb + 1.0 - s.fb); 
+   derm2[h]= float(magw-magn[i])/(Delta1[k]*sig[h]);
+   if(k==0) l.t0 -= double(Delta1[0]*sig[h]);  
+   if(k==1) l.u0 -= double(Delta1[1]*sig[h]);  
+   if(k==2) l.tE -= double(Delta1[2]*sig[h]);  
+   if(k==3) s.xi -= double(Delta1[3]*sig[h]);  
+   if(k==4) s.fb -= double(Delta1[4]*sig[h]);   
+   if(k==5) s.mbs-= double(Delta1[5]*sig[h]); 
+   if(k==6) l.piE-= double(Delta1[6]*sig[h]);
+   if(k==7) s.ros-= double(Delta1[7]*sig[h]);}
+   derm2f= double(derm2[0]+derm2[1])*0.5;
+   
+   co.FishM[j][k] += derm1f*derm2f/(errm[i]*errm[i]);}
+   
+   }//end of for J
+   }//end of data for
+   
+   for(int j=0; j<Nx; ++j){
+   for(int k=(j+1);k<Nx; ++k) co.FishM[j][k]= co.FishM[k][j]; }
+   //for(int j=0; j<Nx; ++j){
+  // for(int k=0; k<=j; ++k)   cout << co.FishM[j][k]<<"    ";
+  // cout << endl;}
+   
+  
+    //inverse1(co);
+    fil2=fopen("./files/MONT1/IBH_ROMAN2a.txt","a+");
+    fprintf(fil2,"%d  %.7lf  %.7lf %.7lf  %.7lf %.7lf   %.7lf  %.7lf  %.8e   %.8e %.8e  %.8e %.8e %.8e   %.8e %.8e %.8e %.8e   %.8e %.8e  %.8e %.8e %.8e   %.8e %.8e %.8e %.8e %.8e %.8e  %.8e %.8e %.8e %.8e %.8e %.8e %.8e\n",
+    counter,l.t0, l.u0, l.tE, s.xi, s.fb, s.mbs, l.piE, 
+    co.FishM[0][0], 
+    co.FishM[1][0], co.FishM[1][1], 
+    co.FishM[2][0], co.FishM[2][1], co.FishM[2][2],
+    co.FishM[3][0], co.FishM[3][1], co.FishM[3][2],co.FishM[3][3],
+    co.FishM[4][0], co.FishM[4][1], co.FishM[4][2],co.FishM[4][3],co.FishM[4][4],
+    co.FishM[5][0], co.FishM[5][1], co.FishM[5][2],co.FishM[5][3],co.FishM[5][4],co.FishM[5][5], 
+    co.FishM[6][0], co.FishM[6][1], co.FishM[6][2],co.FishM[6][3],co.FishM[6][4],co.FishM[6][5], co.FishM[6][6]); 
+    //co.FishM[7][0], co.FishM[7][1], co.FishM[7][2],co.FishM[7][3],co.FishM[7][4],co.FishM[7][5], co.FishM[7][6], co.FishM[7][7]);//44
+    fclose(fil2); 
+    //%.8e %.8e %.8e %.8e %.8e %.8e %.8e  %.8e\n",
+   
+   
+///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH   
+
+   
+   for(int i=0; i<ndw; ++i){
+   
+   for (int j=0; j<Ny; ++j) {
+   
+   for(int h=0; h<2; ++h){
+   if(j==0) l.tetE += double(Delta2[0]*sig[h]);
+   if(j==1) s.mus1 += double(Delta2[1]*sig[h]);
+   if(j==2) s.mus2 += double(Delta2[2]*sig[h]);
+   lightcurve(s,l,as,timn[i]);
+   dera1[h]= float(s.pos1-soux[i])/(Delta2[j]*sig[h]);  
+   derb1[h]= float(s.pos2-souy[i])/(Delta2[j]*sig[h]);
+   if(j==0) l.tetE -= double(Delta2[0]*sig[h]);
+   if(j==1) s.mus1 -= double(Delta2[1]*sig[h]); 
+   if(j==2) s.mus2 -= double(Delta2[2]*sig[h]);}
+   dera1f=(dera1[0]+ dera1[1])*0.5;  
+   derb1f=(derb1[0]+ derb1[1])*0.5;  
+  
+   
+   for(int k=0; k<=j; ++k){   
+   
+   for(int h=0; h<2; ++h){
+   if(k==0) l.tetE += double(Delta2[0]*sig[h]);
+   if(k==1) s.mus1 += double(Delta2[1]*sig[h]);
+   if(k==2) s.mus2 += double(Delta2[2]*sig[h]);
+   lightcurve(s,l,as,timn[i]);
+   dera2[h]= float(s.pos1-soux[i])/(Delta2[k]*sig[h]);  
+   derb2[h]= float(s.pos2-souy[i])/(Delta2[k]*sig[h]);  
+   if(k==0) l.tetE -= double(Delta2[0]*sig[h]);
+   if(k==1) s.mus1 -= double(Delta2[1]*sig[h]); 
+   if(k==2) s.mus2 -= double(Delta2[2]*sig[h]);}
+   dera2f=(dera2[0]+ dera2[1])*0.5;  
+   derb2f=(derb2[0]+ derb2[1])*0.5;  
+   
+   co.FishA[j][k] += (dera1f*dera2f + derb1f*derb2f)/(erra[i]*erra[i]);}
+  
+   }//end of loop J
+   }//end of loop data
+   
+   for(int j=0; j<Ny; ++j){
+   for(int k=(j+1);k<Ny; ++k) co.FishA[j][k]= co.FishA[k][j];}
+ //  for(int j=0; j<Ny; ++j){
+ //  for(int k=0; k<=j; ++k)  cout << co.FishA[j][k] << "     ";
+ //  cout << endl;}
+   
+  
+   //inverse2(co);
+   fil3=fopen("./files/MONT1/IBH_ROMAN3a.txt","a+");
+   fprintf(fil3, "%d  %.7lf    %.7lf    %.7lf   %.9e    %.9e    %.9e   %.9e   %.9e   %.9e\n",
+   counter,l.tetE, s.mus1, s.mus2,
+   co.FishA[0][0], 
+   co.FishA[1][0], co.FishA[1][1], 
+   co.FishA[2][0], co.FishA[2][1], co.FishA[2][2]);
+   fclose(fil3); 
+///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
+/*
+   cout<<"Inverse Matrix Magnification ****************************"<<endl;
+   for(int i=0;i<Nx; ++i){
+   for(int j=0;j<Nx; ++j)  cout << co.InvM[i][j] << "     ";
+   cout << endl;}
+   cout<<"Inverse Matrix Astrometry ***************** **************"<<endl;
+   for(int i=0;i<Ny; ++i){
+   for(int j=0;j<Ny; ++j)    cout << co.InvA[i][j] << "     ";
+   cout << endl;}
+   cout<<"************************************************"<<endl;*/
+///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH   
+   
+   
    if(int(counter)%1==0){
    cout<<"============================================================="<<endl;
-   cout<<"counter:     "<<counter<<endl;
+   cout<<"counter:     "<<counter<<"\t icon:  "<<icon<<endl;
    cout<<"lat:  "<<s.lat<<"\t lon:  "<<s.lon<<endl;
    cout<<"********************** SOURCE **************************"<<endl;
    cout<<"Ds:  "<<s.Ds<<"\t nums:  "<<s.nums<<"\t strucs:  "<<s.struc<<endl;
@@ -450,16 +596,21 @@ int main()
    cout<<"tE:  "<<l.tE<<"\t RE(AU):  "<<l.RE/AU<<"\t t0:  "<<l.t0<<endl;
    cout<<"Vt:  "<<l.Vt<<"\t mul(mas/days):  "<<l.mul<<"\t u0:  "<<l.u0<<endl;
    cout<<"************ WFIRST & OGLE ***************************"<<endl;
-   cout<<"flag_det:  "<<flag_det<<"\t dchi:  "<<dchi<<"\t ndw:  "<<ndw<<endl;
-   cout<<"Nmlw:    "<<Nmlw<<"\t flag_peak:  "<<flag_peak<<endl;
-   cout<<"==============================================================="<<endl;}
-   
-   delete [] magn, timn, soux, souy;
-   
+   cout<<"flag_det:  "<<flag_det<<"\t dchi:  "<<dchi<<"\t **************ndw:  "<<ndw<<endl;
+   cout<<"t0:  "<<l.t0<<"\t u0:  "<<l.u0<<"\t tE:  "<<l.tE<<endl;
+   cout<<"ksi:  "<<s.xi<<"\t fb:  "<<s.fb<<"\t mbs:  "<<s.mbs<<endl;
+   cout<<"piE:   "<<l.piE<<"\t l.tetE:  "<<l.tetE <<endl;
+   cout<<"mus1:  "<<s.mus1<<"\t mus2:  "<<s.mus2<<endl;
+   cout<<"==============================================================="<<endl; }
+
+  
    }//if wfirst>0
+   }//if magnitude of baseline 
    }//end of EXtinction
    }//loop icon
    } ///loop il
+   
+   delete [] magn, timn, soux, souy; 
    return(0);
 }
 ///&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
@@ -472,11 +623,11 @@ double errwfirst(roman & ro, double ghadr, int flag){
 
      double error=0.0, shib=0.0; 
      if(flag==0){///calculating photometry errors ROMAN
-     if(ghadr<ro.magw[0] or  ghadr==ro.magw[0])          error= ro.errw[0];
+     if(ghadr<ro.magw[0] or  ghadr==ro.magw[0])       error= ro.errw[0];
      
-     else if(ghadr>ro.magw[Nw-1] or ghadr==ro.magw[Nw-1]) {
+     else if(ghadr>ro.magw[Nw-1] or ghadr==ro.magw[Nw-1]){
      shib=(ro.errw[Nw-1]-ro.errw[Nw-2])/(ro.magw[Nw-1]-ro.magw[Nw-2]); 
-     error=ro.errw[Nw-1]+shib*(ghadr-ro.magw[Nw-1]);    }
+     error=ro.errw[Nw-1]+shib*(ghadr-ro.magw[Nw-1]);     }
      
      else{
      for(int i=1; i<Nw; ++i){
@@ -488,7 +639,9 @@ double errwfirst(roman & ro, double ghadr, int flag){
      
      
      if(flag==1){///calculating astrometry error ROMAN
+     
      if(ghadr<ro.maga[0] or  ghadr==ro.maga[0])            error= ro.erra[0]; 
+     
      else if(ghadr>ro.maga[Na-1] or ghadr==ro.maga[Na-1]){
      shib=(ro.erra[Na-1]-ro.erra[Na-2])/(ro.maga[Na-1]-ro.maga[Na-2]); 
      error=ro.erra[Na-1]+shib*(ghadr-ro.maga[Na-1]);   }   
@@ -506,40 +659,44 @@ double errwfirst(roman & ro, double ghadr, int flag){
 }     
 ///&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&//
 //                                                                    //
-//                         AStrometric calculations                   //
+//                         Light curves and Astrometry                //
 //                                                                    //
 ///&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&//
-void astrometric(source & s, astromet & as , double tim)
-{
-
-   double vex, vey, VSE_R, VSE_T, VSE_Z, Ve_x;  
-   vex= as.vearth * cos(as.omegae* tim + M_PI/2.0);
-   vey= as.vearth * sin(as.omegae* tim + M_PI/2.0);
-   VSE_R = double( cos(as.tetp)*vex );
-   VSE_T = double( vey );
-   VSE_Z = double( sin(as.tetp)*vex );
- 
-   as.Ve_n1= VSE_R*sin(s.deltao)  - VSE_T*cos(s.deltao);
-   Ve_x=    -VSE_R*cos(s.deltao)  - VSE_T*sin(s.deltao);
-   as.Ve_n2=-sin(s.FI)*Ve_x + cos(s.FI)*VSE_Z;
-    
+void lightcurve(source & s, lens & l, astromet & as, double timh)
+{ 
+   double dvex, dvey, Ve_x, tt, ux, uy;
+   double int1=0.0, int2=0.0; 
+   for (int ig=0; ig<2; ++ig){
+   if(ig==0) tt=timh; 
+   if(ig==1) tt=0.0;    
+   dvex= +as.vearth* sin(as.omegae* tt + M_PI/2.0) / as.omegae;//km/s
+   dvey= -as.vearth* cos(as.omegae* tt + M_PI/2.0) / as.omegae;//km/s
+   as.Ve_n1= cos(as.tetp)*dvex*sin(s.deltao) - dvey*cos(s.deltao);
+   Ve_x=    -cos(as.tetp)*dvex*cos(s.deltao) - dvey*sin(s.deltao);
+   as.Ve_n2=-sin(s.FI)*Ve_x + cos(s.FI)*sin(as.tetp)*dvex;
+   if(ig==0) {int1 = as.Ve_n1; int2 = as.Ve_n2; }
+   if(ig==1) {int1-= as.Ve_n1; int2-= as.Ve_n2; }}
+   as.ue_n1= int1; 
+   as.ue_n2= int2; 
+      
+   ux=-l.u0*sin(s.xi) + (timh-l.t0)*cos(s.xi)/l.tE  + l.piE * as.ue_n1;
+   uy= l.u0*cos(s.xi) + (timh-l.t0)*sin(s.xi)/l.tE  + l.piE * as.ue_n2;
    
-    if(fabs(as.Ve_n1)>fabs(2.0*as.vearth) or fabs(as.Ve_n2)>fabs(2.0*as.vearth)){
-    cout<<"ERROR Vsun_as_l:  "<<as.Ve_n1<<"\t VSun_s:  "<<s.VSun_n1<<"\t Earth_V:  "<<as.vearth<<endl;
-    cout<<"Vsun_as_b:  "<<as.Ve_n2<<"\t VSun_s:  "<<s.VSun_n2<<endl;
-    cout<<"TET:  "<<s.TET<<"\t  FI:  "<<s.FI<<endl;
-    cout<<"tetp:  "<<as.tetp<<endl;
-    cout<<"s.deltao:  "<<s.deltao<<endl;
-    int uue ; cin>>uue;}
+   s.ut=sqrt(ux*ux+ uy*uy);  
+   if(s.ut==0.0)  s.ut=1.0e-50; 
+   
+   tt= (ux-l.piE*as.ue_n1)*(ux-l.piE*as.ue_n1) + (uy-l.piE*as.ue_n2)*(uy-l.piE*as.ue_n2);
+   
+   s.pos1= -l.u0*l.tetE*sin(s.xi) + s.mus1*(timh-l.t0) + (ux - l.piE*as.ue_n1)*l.tetE/(tt + 2.0); 
+   s.pos2= +l.u0*l.tetE*cos(s.xi) + s.mus2*(timh-l.t0) + (uy - l.piE*as.ue_n2)*l.tetE/(tt + 2.0);   
 }
-///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
 ///==============================================================//6
 ///                                                              //
 ///                  optical_depth                               //
 ///                                                              //
 ///==============================================================//
 void optical_depth(source & s)
-{
+{ 
     double ds =(double)s.nums*step;///kpc
     double CC=4.0*G*M_PI*ds*ds*pow(10.0,9.0)*M_sun/(velocity*velocity*KP);
     double dl,x,dx;
@@ -672,10 +829,10 @@ else if (rf<=(s.rho_disk[nums]+s.rho_bulge[nums]+s.rho_ThD[nums]+ s.rho_halo[num
     Av=ex.Aks*Avks;
     if(Av<0.0)    Av=0.0;
 
-    if(Av>20.0 or Av<-0.00365 or Ds>MaxD or Ds<0.0){
-    cout<<"ERROR Ds:  "<<Ds<<" \t Av:  "<<Av<<endl;
-    cout<<"Nblend[4]:  "<<s.Nblend[4]<<"\t Nblend[1]:  "<<s.Nblend[1]<<endl;
-    cout<<"Aks:  "<<ex.Aks<<"\t latitude:   "<<s.lat<<"\t longtide:  "<<s.lon<<endl; }
+    //if(Av>20.0 or Av<-0.00365 or Ds>MaxD or Ds<0.0){
+    //cout<<"ERROR Ds:  "<<Ds<<" \t Av:  "<<Av<<endl;
+    //cout<<"Nblend[4]:  "<<s.Nblend[4]<<"\t Nblend[1]:  "<<s.Nblend[1]<<endl;
+    //cout<<"Aks:  "<<ex.Aks<<"\t latitude:   "<<s.lat<<"\t longtide:  "<<s.lon<<endl; }
 
 
     for(int i=0;  i<M; ++i){
@@ -700,6 +857,9 @@ else if (rf<=(s.rho_disk[nums]+s.rho_bulge[nums]+s.rho_ThD[nums]+ s.rho_halo[num
     s.nums>Num or s.nums<=0 or Av<0.0 or s.cl<0 or s.cl>=6){
     cout<<"ERROR(source):  type: "<<s.type<<"\t struc: "<<struc<<"\t num: "<<num<<"\t cl:  "<<s.cl<<endl;   cin>>yye;}
    // cout<<"************** End of func_source  ****************"<<endl;
+   s.fb= s.blend[4]; 
+   s.mbs= s.magb[4]; 
+   //cout<<"blending:  "<<s.fb<<"\t m_base:  "<<s.mbs<<endl;
 }
 ///==============================================================//
 ///                                                              //
@@ -754,23 +914,23 @@ void func_lens(lens & l, source & s)
     l.RE=l.RE*sqrt(l.xls*(1.0-l.xls));///meter
     vrel(s,l);
     l.tE=l.RE/(l.Vt*1000.0*3600.0*24.0);///in day
-    s.ro_star=s.Rstar*Rsun*l.xls/l.RE;
+    s.ros=double(s.Rstar*Rsun*l.xls/l.RE);
     l.mul=l.Vt*1000.0*3600.0*24.0/(l.Dl*AU);///mas/days
     l.u0=RandR(0.0,1.0);
+    if(l.u0==0.0) l.u0=1.0e-5; 
     l.tetE= double(l.RE/AU/l.Dl);///marcs
-
-    l.t0=RandR(1.0,5.0*year-1.0);
+    l.t0=RandR(2.0,5.0*year-2.0);
     //l.pt1=0.0;
     //l.pt2=5.0*year; //+2.5*l.tE;
   
-    if(s.ro_star<=0.0 or l.tE<=0.0 or l.Dl>s.Ds or l.Vt<=0.0 or l.Ml<0.0){
-    cout<<"ERROR ro_star:  "<<s.ro_star<<endl;
-    cout<<"Vt:  "<<l.Vt<<endl;
-    cout<<"RE: "<<l.RE/AU<<"\t xls:  "<<l.xls<<"\t tE: "<<l.tE<<endl;
-    cout<<"Ml:  "<<l.Ml<<"\t Dl:  "<<l.Dl<<"\t Ds:  "<<s.Ds<<endl;
-    cout<<"numl:  "<<l.numl<<"\t Vt:  "<<l.Vt<<"\t mul:  "<<l.mul<<endl;  cin>>yye;}
-   // cout<<"ksi:   "<<l.ksi<<"\t ro_star:  "<<s.ro_star<<endl;
-    //cout<<"************** End of func_Lens  ****************"<<endl;
+    //if(s.ros<=0.0 or l.tE<=0.0 or l.Dl>s.Ds or l.Vt<=0.0 or l.Ml<0.0){
+  //  cout<<"ERROR ros:  "<<s.ros<<endl;
+ //   cout<<"Vt:  "<<l.Vt<<endl;
+ //   cout<<"RE: "<<l.RE/AU<<"\t xls:  "<<l.xls<<"\t tE: "<<l.tE<<endl;
+ //   cout<<"Ml:  "<<l.Ml<<"\t Dl:  "<<l.Dl<<"\t Ds:  "<<s.Ds<<endl;
+ //   cout<<"numl:  "<<l.numl<<"\t Vt:  "<<l.Vt<<"\t mul:  "<<l.mul<<endl; // cin>>yye;}
+ //   cout<<"ksi:   "<<s.xi<<"\t ros:  "<<s.ros<<"\t l.tetE:  "<<l.tetE<<endl;
+ //   cout<<"************** End of func_Lens  ****************"<<endl;
 }
 ///==============================================================//
 ///                                                              //
@@ -811,9 +971,6 @@ void read_cmd(CMD & cm)
     cout<<"ERROR Age(JI): "<<Age2[i]<<"\t metal: "<<mm2[i]<<"\t B[i]"<<B2[i]<<"\t M[i]: "<<M2[i]<<"\t i: "<<i<<endl;
     cout<<"Age1[i]:  "<<Age1[i]<<"\t mm1[i]:  "<<mm1[i]<<endl;  cin>>uui;}}
     fclose(ji);
-
-
-
 
 ////=================================== THIN DISK ==============================
     int j=0;
@@ -1237,14 +1394,14 @@ void vrel(source & s, lens & l)
 
 
   double NN=2.5;
-  double sigma_R_Disk, sigma_T_Disk, sigma_Z_Disk;
+  double sigma_R_Disk,   sigma_T_Disk,  sigma_Z_Disk;
   double sigma_R_DiskL,  sigma_T_DiskL, sigma_Z_DiskL;
   double sigma_R_DiskS,  sigma_T_DiskS, sigma_Z_DiskS;
   double sigma_R_TDisk=67.0,  sigma_T_TDisk=51.0, sigma_Z_TDisk=42.0;
   double sigma_R_halo= 131.0, sigma_T_halo=106.0, sigma_Z_halo=85.0;
   double sigma_R_Bulge=113.0, sigma_T_Bulge=115.0, sigma_Z_Bulge=100.0;
   double Rho[8]={00.0}; double maxr=0.0;
-  for(int i=0; i<8; ++i){ Rho[i]=rho0[i]*corr[i]/d0[i]; maxr=maxr+ Rho[i];}
+  for(int i=0; i<8; ++i){Rho[i]=rho0[i]*corr[i]/d0[i]; maxr=maxr+ Rho[i];}
 
  
 for (int i=0;i<2; ++i){
@@ -1253,11 +1410,9 @@ for (int i=0;i<2; ++i){
 else if(test<=(Rho[0]+Rho[1]))              {sigma_R_Disk=19.8; sigma_T_Disk=12.8; sigma_Z_Disk=8.0; age=0.575; }
 else if(test<=(Rho[0]+Rho[1]+Rho[2]))       {sigma_R_Disk=27.2; sigma_T_Disk=17.6; sigma_Z_Disk=10.0;age=1.5;  }
 else if(test<=(Rho[0]+Rho[1]+Rho[2]+Rho[3])){sigma_R_Disk=30.2; sigma_T_Disk=19.5; sigma_Z_Disk=13.2; age=2.5; }
-else if(test<=(Rho[0]+Rho[1]+Rho[2]+Rho[3]+Rho[4]))
-                                       {sigma_R_Disk=36.7; sigma_T_Disk=23.7; sigma_Z_Disk=15.8; age=4.0; }
-else if(test<=(Rho[0]+Rho[1]+Rho[2]+Rho[3]+Rho[4]+Rho[5]))
-                                       {sigma_R_Disk=43.1; sigma_T_Disk=27.8; sigma_Z_Disk=17.4; age=6.0; }
-else if(test<=maxr)                    {sigma_R_Disk=43.1; sigma_T_Disk=27.8; sigma_Z_Disk=17.5; age=8.5; }
+else if(test<=(Rho[0]+Rho[1]+Rho[2]+Rho[3]+Rho[4]))       {sigma_R_Disk=36.7; sigma_T_Disk=23.7; sigma_Z_Disk=15.8; age=4.0; }
+else if(test<=(Rho[0]+Rho[1]+Rho[2]+Rho[3]+Rho[4]+Rho[5])){sigma_R_Disk=43.1; sigma_T_Disk=27.8; sigma_Z_Disk=17.4; age=6.0; }
+else if(test<=maxr)                                       {sigma_R_Disk=43.1; sigma_T_Disk=27.8; sigma_Z_Disk=17.5; age=8.5; }
 else  {cout<<"BIG ERROR "<<test<<"\t maxr: "<<maxr<<endl;  int yye; cin>>yye;}
     if(i==0) {
     sigma_R_DiskS= sigma_R_Disk;
@@ -1341,7 +1496,7 @@ else  {cout<<"BIG ERROR "<<test<<"\t maxr: "<<maxr<<endl;  int yye; cin>>yye;}
     deltas= pi - fabs(tetd) -fabs(betas);  
     if(betal<0.0)  deltal= -1.0*deltal;
     if(betas<0.0)  deltas= -1.0*deltas;
-    s.deltao= pi-fabs(tetd);
+    s.deltao= double( pi-fabs(tetd) );
     if(tetd<0.0)  s.deltao=-1.0*s.deltao; 
 
 ///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
@@ -1363,11 +1518,11 @@ else  {cout<<"BIG ERROR "<<test<<"\t maxr: "<<maxr<<endl;  int yye; cin>>yye;}
     l.Vt=sqrt(fabs( vls1*vls1 + vls2*vls2 ) );
     
 
-    if(vls1>0.0 and vls2>=0.0)         s.tetv=atan(fabs(vls2)/fabs(vls1));
-    else if(vls1<=0.0 and vls2>0.0)    s.tetv=atan(fabs(vls1)/fabs(vls2)) + M_PI/2.0;
-    else if(vls1<0.0 and vls2<=0.0)    s.tetv=atan(fabs(vls2)/fabs(vls1)) + M_PI;
-    else if(vls1>=0.0 and vls2<0.0)    s.tetv=atan(fabs(vls1)/fabs(vls2)) + 3.0*M_PI/2.0;
-    else if(s.tetv>2.0*M_PI)           s.tetv-= 2.0*M_PI; 
+    if(vls1>0.0 and vls2>=0.0)         s.xi=atan(fabs(vls2)/fabs(vls1));
+    else if(vls1<=0.0 and vls2>0.0)    s.xi=atan(fabs(vls1)/fabs(vls2)) + M_PI/2.0;
+    else if(vls1<0.0 and vls2<=0.0)    s.xi=atan(fabs(vls2)/fabs(vls1)) + M_PI;
+    else if(vls1>=0.0 and vls2<0.0)    s.xi=atan(fabs(vls1)/fabs(vls2)) + 3.0*M_PI/2.0;
+    else if(s.xi>2.0*M_PI)             s.xi-= 2.0*M_PI; 
     
     if(vls1==0.0 and vls2==0.0){
     cout<<"Big error both zeros:  "<<vls1<<"\t vls_b:  "<<vls2<<endl;
@@ -1377,16 +1532,6 @@ else  {cout<<"BIG ERROR "<<test<<"\t maxr: "<<maxr<<endl;  int yye; cin>>yye;}
     cout<<" Vt is very large: "<<l.Vt<<"\t vl: "<<l.vl<<"\t Vs: "<<l.vs<<endl;
     cout<<"source type:  "<<s.type<<"\t s.struc:  "<<s.struc<<endl;
     int yee; cin>>yee;}
-    cout<<"(vrel_func):   s.deltao:  "<<s.deltao<<"FI: "<<s.FI<<endl;
-    
-///*****************************************************
+    //cout<<"(vrel_func):   s.deltao:  "<<s.deltao<<"FI: "<<s.FI<<endl;
 }
-
-
-
-   
-
-
-
-
-///&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+///HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHH
